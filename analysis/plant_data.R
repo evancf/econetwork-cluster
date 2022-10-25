@@ -6,14 +6,38 @@ library("rnaturalearth")
 library("rnaturalearthdata")
 library("sf")
 
+devtools::source_gist("71d758f65261a72ab7dc") # gist for ipak
+
 
 
 # Plot approach ----------------------------------------------------------------
 
-#BIEN_plot_list_sampling_protocols() %>% View()
+# BIEN_plot_list_sampling_protocols() %>% View()
 
-plot_data <- BIEN_plot_sampling_protocol(sampling_protocol = BIEN_plot_list_sampling_protocols()[[1]][7],
-                                            new.world = T)
+# # For some reason, this misses a few plots...
+# plot_data_old <- BIEN_plot_sampling_protocol(sampling_protocol = BIEN_plot_list_sampling_protocols()[[1]][7],
+#                                             new.world = T)
+# plot_data_old2 <- BIEN_plot_sampling_protocol(sampling_protocol = BIEN_plot_list_sampling_protocols()[[1]][7])
+# plot_dat_old <- bind_rows(plot_data_old, plot_data_old2)
+
+#
+md <- BIEN_plot_metadata()
+
+plots_to_use <- md %>% filter(sampling_protocol %in% c("0.1 ha  transect, stems >= 2.5 cm dbh",
+                                       "0.1 ha  transect, stems >= 2.5 cm dbh (Warning: species + count of individuals + stem DBHs recorded once per subplot. Individuals not linked to stems)")) %>% 
+  pull(plot_name)
+
+plot_data <- BIEN_plot_name(plots_to_use)
+
+# # Just making sure these are all the plots available...
+# unique(plot_data$plot_name) %>% length()
+# missed_plots <- plots_to_use[!plots_to_use %in% unique(plot_data$plot_name)]
+# missed_metadata <- md %>% filter(plot_name %in% missed_plots)
+# missed_datasources <- missed_metadata %>% pull(datasource) %>% unique()
+# missed_plot_data <- BIEN_plot_datasource(missed_datasources)
+# missed_plot_data <- missed_plot_data %>% 
+#   filter(sampling_protocol == "0.1 ha  transect, stems >= 2.5 cm dbh")
+# table(missed_plot_data$plot_name %in% plot_data$plot_name)
 
 # # Could try pulling in other / more data
 # plot_data2 <- BIEN_plot_datasource(datasource = "SALVIAS")
@@ -53,21 +77,21 @@ dim(plot_summary) # I thought there were 620 plots?
 world <- ne_countries(scale = "medium", 
                       returnclass = "sf")
 
-americas <- world %>% 
-  filter(region_un == "Americas") %>% 
-  st_cast(americas,"POLYGON")
-
-polys_to_rm <- st_coordinates(americas) %>% 
-  as.data.frame() %>% group_by(L2) %>% 
-  summarize(long_test = any(X > 80)) %>% 
-  pull(long_test)
-
-americas <- americas[!polys_to_rm,]
+# americas <- world %>% 
+#   filter(region_un == "Americas") %>% 
+#   st_cast("POLYGON")
+# 
+# polys_to_rm <- st_coordinates(americas) %>% 
+#   as.data.frame() %>% group_by(L2) %>% 
+#   summarize(long_test = any(X > 80)) %>% 
+#   pull(long_test)
+# 
+# americas <- americas[!polys_to_rm,]
+# 
+# americas <- americas %>% 
+#   st_transform(crs = projcrs)
 
 projcrs <- "+proj=cea +lon_0=0 +lat_ts=30 +x_0=0 +y_0=0 +datum=WGS84 +ellps=WGS84 +units=m +no_defs"
-americas <- americas %>% 
-  st_transform(crs = projcrs)
-
 
 plot_coords <- st_as_sf(plot_summary,
                              coords = c("longitude", "latitude"),
@@ -77,10 +101,11 @@ plot_coords <- plot_coords  %>%
   st_transform(crs = projcrs)
 
 
-png(file = "./visualization/323 sites.png", width = 4, height = 4, units = "in",
+png(file = "./visualization/392 sites.png", width = 4, height = 4, units = "in",
     res = 440)
 
-ggplot(data = americas) +
+#ggplot(data = americas) +
+ggplot(data = world) +
   geom_sf(lwd = 0) +
   theme_void() +
   #coord_sf(xlim = c(-180, 80), ylim = c(-60, 32), expand = FALSE) +
@@ -111,7 +136,7 @@ plant_trait_wide <- read.csv("/Users/evanfricke/Dropbox/*Science/*Research/*SESY
 
 # Pivot longer for tidy format
 plant_traits <- plant_trait_wide %>% 
-  rename(scrubbed_species_binomial = species) %>% 
+  dplyr::rename(scrubbed_species_binomial = species) %>% 
   pivot_longer(cols = 3:13,
                names_to = "trait_name",
                values_to = "trait_value") %>% 
@@ -194,6 +219,61 @@ b_seed_length <- BIEN_trait_trait(trait = "seed length")
 b_fruit_length <- BIEN_trait_trait(trait = "maximum fruit length") %>% 
   bind_rows(BIEN_trait_trait(trait = "minimum fruit length")) %>% 
   mutate(trait_name = "fruit length")
+b_whole_plant_growth_form <- BIEN_trait_trait(trait = "whole plant growth form")
+
+# Fix up whole plant growth form
+
+# First, just clean up little odd things
+b_whole_plant_growth_form$trait_value <- b_whole_plant_growth_form$trait_value %>% 
+  trimws() %>% 
+  tolower() %>% 
+  gsub("_", " ", ., fixed = T) %>% 
+  gsub("*", " ", ., fixed = T) %>% 
+  gsub(",", " ", ., fixed = T) %>%
+  gsub("(", " ", ., fixed = T) %>%
+  gsub(")", " ", ., fixed = T) %>%
+  gsub("/", " ", ., fixed = T) %>%
+  gsub("-", " ", ., fixed = T) %>%
+  gsub("  ", " ", ., fixed = T) %>% 
+  gsub("  ", " ", ., fixed = T) %>% 
+  gsub(" plant", " ", ., fixed = T) %>%
+  trimws()
+
+# Note that this project focuses on species that are >2.5 cm dbh, so
+# I will not do much on growth forms that are typically smaller than that
+b_whole_plant_growth_form$trait_value %>% table() %>% sort()
+
+# Combine some common categories
+b_whole_plant_growth_form$trait_value <- b_whole_plant_growth_form$trait_value %>% 
+  recode(shub = "shrub",
+         shurb = "shrub",
+         shrug = "shrub",
+         shrublet = "shrub",
+         treelet = "tree",
+         epiphytic = "epiphyte",
+         hemiepiphyte = "epiphyte", # Same principle as below
+         grass = "graminoid",
+         sedge = "graminoid",
+         forb = "herb",
+         "woody climber" = "liana",
+         "woody vine" = "liana",
+         "herbaceous climber" = "vine")
+
+# Next principle will be to take the last word as the most basic descriptor
+b_whole_plant_growth_form$trait_value <- b_whole_plant_growth_form$trait_value %>% 
+  word(-1)
+
+# Now subset just to the common ones
+b_whole_plant_growth_form <- b_whole_plant_growth_form %>% 
+  filter(trait_value %in% c("tree", "herb", "liana",
+                           "shrub", "graminoid", "epiphyte",
+                           "vine", "climber", "fern",
+                           "parasite"))
+
+
+# Tree, shrub, herb, epiphyte, vine, liana,
+# Herb
+
 
 # Checking that all the units are the same here - yes they are!
 b_leaf_area_per_leaf_dry_mass$unit %>% table()
@@ -201,6 +281,7 @@ b_maximum_whole_plant_height$unit %>% table()
 b_stem_wood_density$unit %>% table()
 b_seed_mass$unit %>% table()
 b_seed_length$unit %>% table()
+b_fruit_length$unit %>% table()
 b_fruit_length$unit %>% table()
 
 # Get a sense for outliers
@@ -226,9 +307,14 @@ bien_plant_traits <- bind_rows(b_leaf_area_per_leaf_dry_mass,
                                b_seed_length,
                                b_fruit_length) %>% 
   mutate(trait_value = as.numeric(trait_value)) %>% # Warning is expected
-  filter(!is.na(trait_value)) %>% 
+  filter(!is.na(trait_value)) %>% # Remove the non-numeric values from the numeric traits
+  mutate(trait_value = as.character(trait_value)) %>% 
+  bind_rows(b_whole_plant_growth_form) %>% 
   left_join(dplyr::select(unit_translator, -unit),
             by = c("trait_name" = "bien_trait_name")) %>% 
+  mutate(try_trait_name = ifelse(trait_name == "whole plant growth form",
+                                 "whole.plant.growth.form",
+                                 try_trait_name)) %>% 
   dplyr::select(-trait_name) %>% 
   mutate(trait_name = try_trait_name) %>% 
   dplyr::select(-try_trait_name)
@@ -237,6 +323,7 @@ bien_plant_traits <- bind_rows(b_leaf_area_per_leaf_dry_mass,
 # Join TRY and BIEN data
 
 plant_traits <- plant_traits %>% 
+  mutate(trait_value = as.character(trait_value)) %>%
   left_join(dplyr::select(unit_translator, -bien_trait_name),
             by = c("trait_name" = "try_trait_name")) %>%
   bind_rows(bien_plant_traits)
@@ -268,29 +355,51 @@ plant_traits <- plant_traits %>%
 
 
 
+
+
 # Getting a sense for plant species trait coverage -----------------------------
 
 plant_traits <- plant_traits %>% 
   mutate(genus = word(scrubbed_species_binomial, 1))
 
-# There shouldn't be NAs at this point, but will use this...
-median_na_rm <- function(x){
-  if(all(is.na(x))){
-    return(NA)
+# # There shouldn't be NAs at this point, but can use this...
+# median_na_rm <- function(x){
+#   if(all(is.na(x))){
+#     return(NA)
+#   } else{
+#     return(median(x, na.rm = T))
+#   }
+# }
+
+my_typical <- function(x){
+  x_num <- as.numeric(x)
+  if(all(is.na(x_num))){
+    return(modelr::typical(x)[1]) 
+    # This is a decision to simply pick the first one when there is a tie
+    # for the most common category
   } else{
-    return(median(x, na.rm = T))
+    return(as.character(modelr::typical(x_num)))
   }
 }
 
+# # An example of how it's necessary to pick one when there's a tie
+# asdf <- filter(plant_traits, scrubbed_species_binomial == "Abelmoschus splendens")
+# asdf
+# asdf %>% 
+#   group_by(scrubbed_species_binomial, trait_name) %>% 
+#   summarise(trait_value_species_median = my_typical(trait_value))
+
 plant_trait_species_median <- plant_traits %>% 
   group_by(scrubbed_species_binomial, trait_name) %>% 
-  summarise(trait_value_species_median = median(trait_value))
+  dplyr::summarise(trait_value_species_median = my_typical(trait_value))
+
+head(plant_trait_species_median)
 
 plant_trait_genus_median <- plant_traits %>% 
   group_by(genus, trait_name) %>% 
-  summarise(trait_value_genus_median = median(trait_value))
+  dplyr::summarise(trait_value_genus_median = my_typical(trait_value))
 
-
+head(plant_trait_genus_median)
 
 # Join to see what's available at the species and genus level
 
@@ -316,12 +425,25 @@ plot_data_trait <- plot_data %>%
   mutate(genus = word(scrubbed_species_binomial, 1)) %>%
   left_join(plant_trait_genus_median_wide, by = "genus")
 
+# Lastly, get fleshy fruitedness
+
+fleshy_dat <- read.csv("./data/fleshy_data.csv", header = T, row.names = 1)
+
+(fleshy_dat$scrubbed_species_binomial %in% plot_data_trait$scrubbed_species_binomial) %>% table()
+(plot_data_trait$scrubbed_species_binomial %in% fleshy_dat$scrubbed_species_binomial) %>% table()
+
+plot_data_trait <- plot_data_trait %>% 
+  left_join(fleshy_dat)
+
+
 # Get coverage that's weighted by individuals
 coverage_abund_weighted <- plot_data_trait %>% 
+  filter(fleshy == 1) %>% 
   summarize_all(function(x) mean(!is.na(x)))
 
 # Or coverage just at the species level
 coverage_sp_level <- plot_data_trait[!duplicated(plot_data_trait$scrubbed_species_binomial),] %>% 
+  filter(fleshy == 1) %>% 
   summarize_all(function(x) mean(!is.na(x)))
 
 colnames(coverage_abund_weighted)
@@ -330,8 +452,8 @@ colnames(coverage_abund_weighted)
 
 # Let's get a sense for coverage visually --------------------------------------
 
-sp_med_trait_cols <- 19:29
-gen_med_trait_cols <- 31:41
+sp_med_trait_cols <- 18:29
+gen_med_trait_cols <- 31:42
 trait_cols <- c(sp_med_trait_cols,
                 gen_med_trait_cols)
 
@@ -370,7 +492,7 @@ text(trait_cols+0.5, -0.02, trait_names_formatted[trait_cols],
      pos = 2,
      xpd = T)
 
-legend("topleft",legend = c("Species-level", "Genus-level"),
+legend("topright",legend = c("Species-level", "Genus-level"),
        fill = c("lightgrey", "lightblue"),
        #pch = 15,
        bty = "n")
@@ -400,10 +522,14 @@ text(trait_cols+0.5, -0.02, trait_names_formatted[trait_cols],
      pos = 2,
      xpd = T)
 
-legend("topleft",legend = c("Species-level", "Genus-level"),
+legend("topright",legend = c("Species-level", "Genus-level"),
        fill = c("lightgrey", "lightblue"),
        #pch = 15,
        bty = "n")
 
 dev.off()
 
+
+# Write this out
+
+write.csv(plot_data_trait, file = "./data/plot_data_trait.csv")
